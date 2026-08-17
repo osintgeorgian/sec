@@ -62,6 +62,7 @@ class SosRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    asyncio.create_task(run_bot())
     yield
 
 app = FastAPI(lifespan=lifespan)
