@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>CarWatch</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--tg-theme-bg-color, #1c1c1e); color: var(--tg-theme-text-color, #fff); }
+    #map { width: 100%; height: 100%; z-index: 1; }
+
+    .sos-btn {
+      position: absolute;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: #ff2d2d;
+      color: white;
+      font-weight: 800;
+      font-size: 16px;
+      border: 4px solid #fff;
+      box-shadow: 0 4px 20px rgba(255, 45, 45, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .sos-btn:active { transform: translateX(-50%) scale(0.92); background: #cc0000; }
+
+    .top-bar {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 1000;
+      display: flex;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .top-bar button {
+      pointer-events: auto;
+      background: var(--tg-theme-button-color, #2481cc);
+      color: var(--tg-theme-button-text-color, #fff);
+      border: none;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 2000;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: var(--tg-theme-bg-color, #2c2c2e);
+      width: 100%;
+      max-width: 480px;
+      border-radius: 16px 16px 0 0;
+      padding: 20px 16px 32px;
+      animation: slideUp 0.25s ease;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+    .modal h3 { margin-bottom: 12px; font-size: 18px; }
+    .modal label { display: block; margin: 10px 0 4px; font-size: 13px; opacity: 0.8; }
+    .modal textarea, .modal select, .modal input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--tg-theme-hint-color, #555);
+      background: var(--tg-theme-secondary-bg-color, #1c1c1e);
+      color: var(--tg-theme-text-color, #fff);
+      font-size: 15px;
+      resize: none;
+    }
+    .modal textarea { height: 90px; }
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .modal-actions button {
+      flex: 1;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-cancel { background: #3a3a3c; color: #fff; }
+    .btn-save { background: var(--tg-theme-button-color, #2481cc); color: #fff; }
+    .btn-danger { background: #ff2d2d; color: #fff; }
+
+    /* Marker popup */
+    .leaflet-popup-content { margin: 10px 12px; min-width: 160px; }
+    .marker-type {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .type-danger { background: #ff2d2d; color: #fff; }
+    .type-safe { background: #34c759; color: #fff; }
+    .type-friend { background: #007aff; color: #fff; }
+    .type-custom { background: #8e8e93; color: #fff; }
+
+    .friend-marker {
+      background: #007aff;
+      border: 3px solid #fff;
+      border-radius: 50%;
+      width: 18px;
+      height: 18px;
+      box-shadow: 0 0 0 2px rgba(0,122,255,0.4);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="top-bar">
+    <button id="btnMyLocation">📍 Я</button>
+    <button id="btnRefresh">🔄</button>
+  </div>
+
+  <button class="sos-btn" id="sosBtn">SOS</button>
+
+  <!-- Add / Edit marker modal -->
+  <div class="modal-overlay" id="markerModal">
+    <div class="modal">
+      <h3 id="modalTitle">Новая метка</h3>
+      <label>Тип</label>
+      <select id="markerType">
+        <option value="custom">Обычная</option>
+        <option value="danger">⚠️ Опасно</option>
+        <option value="safe">✅ Безопасно</option>
+        <option value="friend">🤝 Друг</option>
+      </select>
+      <label>Заметка (номер, описание...)</label>
+      <textarea id="markerNote" placeholder="Например: А123БВ 777, чёрный BMW, вёл себя агрессивно"></textarea>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="btnCancel">Отмена</button>
+        <button class="btn-save" id="btnSave">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- View marker modal -->
+  <div class="modal-overlay" id="viewModal">
+    <div class="modal">
+      <h3>Метка</h3>
+      <div id="viewContent"></div>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="btnCloseView">Закрыть</button>
+        <button class="btn-danger" id="btnDeleteMarker" style="display:none;">Удалить</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ========== Config ==========
+    // ВАЖНО: замени на URL своего API (бот + FastAPI)
+    const API_BASE = "https://YOUR-API-HOST.example.com";  // например https://carwatch.up.railway.app
+    const API_SECRET = "supersecretkey123";                 // тот же что в .env
+
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor("#1c1c1e");
+    tg.setBackgroundColor("#1c1c1e");
+
+    const user = tg.initDataUnsafe?.user;
+    const tgId = user?.id;
+    if (!tgId) {
+      alert("Открой это приложение из Telegram-бота");
+    }
+
+    // ========== Map ==========
+    const map = L.map("map", {
+      zoomControl: false,
+      attributionControl: false
+    }).setView([55.75, 37.62], 12); // Москва по умолчанию
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19
+    }).addTo(map);
+
+    L.control.zoom({ position: "bottomright" }).addTo(map);
+
+    let markersLayer = L.layerGroup().addTo(map);
+    let friendsLayer = L.layerGroup().addTo(map);
+    let pendingLatLng = null;
+    let currentMarkerId = null;
+
+    // ========== Helpers ==========
+    function apiHeaders() {
+      return {
+        "Content-Type": "application/json",
+        "X-Api-Secret": API_SECRET
+      };
+    }
+
+    async function api(path, options = {}) {
+      const url = `${API_BASE}${path}`;
+      const res = await fetch(url, {
+        ...options,
+        headers: { ...apiHeaders(), ...(options.headers || {}) }
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    function typeLabel(t) {
+      return {
+        danger: "⚠️ Опасно",
+        safe: "✅ Безопасно",
+        friend: "🤝 Друг",
+        custom: "📌 Метка"
+      }[t] || t;
+    }
+
+    function typeClass(t) {
+      return "type-" + (t || "custom");
+    }
+
+    // ========== Load data ==========
+    async function loadMarkers() {
+      try {
+        const list = await api("/api/markers");
+        markersLayer.clearLayers();
+        list.forEach(m => {
+          const color = {
+            danger: "#ff2d2d",
+            safe: "#34c759",
+            friend: "#007aff",
+            custom: "#8e8e93"
+          }[m.marker_type] || "#8e8e93";
+
+          const icon = L.divIcon({
+            className: "",
+            html: `<div style="background:${color};width:16px;height:16px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+          });
+
+          const marker = L.marker([m.lat, m.lng], { icon }).addTo(markersLayer);
+          marker.on("click", () => showMarker(m));
+        });
+      } catch (e) {
+        console.error("loadMarkers", e);
+        tg.showAlert("Не удалось загрузить метки. Проверь API.");
+      }
+    }
+
+    async function loadFriends() {
+      if (!tgId) return;
+      try {
+        const list = await api(`/api/friends/${tgId}`);
+        friendsLayer.clearLayers();
+        list.forEach(f => {
+          if (f.lat == null || f.lng == null) return;
+          const name = f.first_name || f.username || "Друг";
+          const battery = f.battery != null ? ` 🔋${f.battery}%` : "";
+          const icon = L.divIcon({
+            className: "",
+            html: `<div class="friend-marker"></div>`,
+            iconSize: [18, 18],
+            iconAnchor: [9, 9]
+          });
+          L.marker([f.lat, f.lng], { icon })
+            .bindTooltip(`${name}${battery}`, { permanent: false, direction: "top" })
+            .addTo(friendsLayer);
+        });
+      } catch (e) {
+        console.error("loadFriends", e);
+      }
+    }
+
+    // ========== Long press → new marker ==========
+    let pressTimer = null;
+    map.on("contextmenu", (e) => { // desktop right-click
+      openAddModal(e.latlng);
+    });
+
+    map.on("mousedown", (e) => {
+      if (e.originalEvent.button !== 0) return;
+      pressTimer = setTimeout(() => {
+        openAddModal(e.latlng);
+        tg.HapticFeedback.impactOccurred("medium");
+      }, 600);
+    });
+    map.on("mouseup mouseleave", () => clearTimeout(pressTimer));
+    map.on("movestart zoomstart", () => clearTimeout(pressTimer));
+
+    // Touch long-press
+    let touchTimer = null;
+    map.getContainer().addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      const latlng = map.mouseEventToLatLng(touch);
+      touchTimer = setTimeout(() => {
+        openAddModal(latlng);
+        tg.HapticFeedback.impactOccurred("medium");
+      }, 650);
+    }, { passive: true });
+    map.getContainer().addEventListener("touchend", () => clearTimeout(touchTimer));
+    map.getContainer().addEventListener("touchmove", () => clearTimeout(touchTimer));
+
+    function openAddModal(latlng) {
+      pendingLatLng = latlng;
+      document.getElementById("modalTitle").textContent = "Новая метка";
+      document.getElementById("markerNote").value = "";
+      document.getElementById("markerType").value = "custom";
+      document.getElementById("markerModal").classList.add("active");
+    }
+
+    document.getElementById("btnCancel").onclick = () => {
+      document.getElementById("markerModal").classList.remove("active");
+      pendingLatLng = null;
+    };
+
+    document.getElementById("btnSave").onclick = async () => {
+      if (!pendingLatLng || !tgId) return;
+      const note = document.getElementById("markerNote").value.trim();
+      const marker_type = document.getElementById("markerType").value;
+
+      try {
+        tg.MainButton.showProgress();
+        await api(`/api/markers?tg_id=${tgId}`, {
+          method: "POST",
+          body: JSON.stringify({
+            lat: pendingLatLng.lat,
+            lng: pendingLatLng.lng,
+            note,
+            marker_type
+          })
+        });
+        document.getElementById("markerModal").classList.remove("active");
+        pendingLatLng = null;
+        await loadMarkers();
+        tg.HapticFeedback.notificationOccurred("success");
+        tg.showPopup({ title: "Готово", message: "Метка добавлена", buttons: [{ type: "ok" }] });
+      } catch (e) {
+        console.error(e);
+        tg.showAlert("Ошибка сохранения метки");
+      } finally {
+        tg.MainButton.hideProgress();
+      }
+    };
+
+    // ========== View marker ==========
+    function showMarker(m) {
+      currentMarkerId = m.id;
+      const who = m.first_name || m.username || "Кто-то";
+      const html = `
+        <span class="marker-type ${typeClass(m.marker_type)}">${typeLabel(m.marker_type)}</span>
+        <p style="margin:8px 0;white-space:pre-wrap">${m.note || "<i>Без заметки</i>"}</p>
+        <p style="font-size:13px;opacity:0.7">Добавил: ${who}<br>${m.created_at || ""}</p>
+      `;
+      document.getElementById("viewContent").innerHTML = html;
+
+      const delBtn = document.getElementById("btnDeleteMarker");
+      if (m.created_by == tgId) {
+        delBtn.style.display = "block";
+      } else {
+        delBtn.style.display = "none";
+      }
+      document.getElementById("viewModal").classList.add("active");
+    }
+
+    document.getElementById("btnCloseView").onclick = () => {
+      document.getElementById("viewModal").classList.remove("active");
+      currentMarkerId = null;
+    };
+
+    document.getElementById("btnDeleteMarker").onclick = async () => {
+      if (!currentMarkerId || !tgId) return;
+      try {
+        await api(`/api/markers/${currentMarkerId}?tg_id=${tgId}`, { method: "DELETE" });
+        document.getElementById("viewModal").classList.remove("active");
+        await loadMarkers();
+        tg.HapticFeedback.notificationOccurred("success");
+      } catch (e) {
+        tg.showAlert("Не удалось удалить");
+      }
+    };
+
+    // ========== SOS ==========
+    document.getElementById("sosBtn").onclick = async () => {
+      if (!tgId) return;
+
+      const confirm = await new Promise(resolve => {
+        tg.showPopup({
+          title: "SOS",
+          message: "Отправить экстренное оповещение всем друзьям с твоей геолокацией?",
+          buttons: [
+            { id: "cancel", type: "cancel" },
+            { id: "ok", type: "destructive", text: "ДА, SOS!" }
+          ]
+        }, (btnId) => resolve(btnId === "ok"));
+      });
+
+      if (!confirm) return;
+
+      try {
+        tg.HapticFeedback.notificationOccurred("error");
+        // Получаем текущую позицию
+        const pos = await getCurrentPosition();
+        const res = await api(`/api/sos?tg_id=${tgId}`, {
+          method: "POST",
+          body: JSON.stringify({
+            lat: pos.lat,
+            lng: pos.lng,
+            message: "🚨 Мне нужна помощь!"
+          })
+        });
+
+        if (res.ok) {
+          tg.showAlert(`SOS отправлен ${res.sent} друзьям`);
+        } else {
+          tg.showAlert(res.error === "no_friends" ? "Сначала добавь друзей в боте" : "Ошибка отправки");
+        }
+      } catch (e) {
+        console.error(e);
+        tg.showAlert("Не удалось определить геолокацию или отправить SOS");
+      }
+    };
+
+    function getCurrentPosition() {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("no geolocation"));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+          reject,
+          { enableHighAccuracy: true, timeout: 10000 }
+        );
+      });
+    }
+
+    // ========== My location + update ==========
+    document.getElementById("btnMyLocation").onclick = async () => {
+      try {
+        const pos = await getCurrentPosition();
+        map.setView([pos.lat, pos.lng], 16);
+        // обновляем свою позицию на сервере
+        let battery = null;
+        if (navigator.getBattery) {
+          const bat = await navigator.getBattery();
+          battery = Math.round(bat.level * 100);
+        }
+        await api(`/api/location?tg_id=${tgId}`, {
+          method: "POST",
+          body: JSON.stringify({ lat: pos.lat, lng: pos.lng, battery })
+        });
+        await loadFriends();
+      } catch (e) {
+        tg.showAlert("Не удалось получить геолокацию. Разреши доступ.");
+      }
+    };
+
+    document.getElementById("btnRefresh").onclick = () => {
+      loadMarkers();
+      loadFriends();
+      tg.HapticFeedback.impactOccurred("light");
+    };
+
+    // Автообновление своей позиции каждые 2 минуты (пока открыто)
+    setInterval(async () => {
+      if (!tgId) return;
+      try {
+        const pos = await getCurrentPosition();
+        let battery = null;
+        if (navigator.getBattery) {
+          const bat = await navigator.getBattery();
+          battery = Math.round(bat.level * 100);
+        }
+        await api(`/api/location?tg_id=${tgId}`, {
+          method: "POST",
+          body: JSON.stringify({ lat: pos.lat, lng: pos.lng, battery })
+        });
+      } catch (_) {}
+    }, 120000);
+
+    // Первый запуск
+    loadMarkers();
+    loadFriends();
+
+    // Попробуем сразу центрировать на пользователе
+    getCurrentPosition().then(pos => {
+      map.setView([pos.lat, pos.lng], 14);
+    }).catch(() => {});
+  </script>
+</body>
+</html>
